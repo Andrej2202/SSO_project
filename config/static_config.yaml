@@ -1,0 +1,5 @@
+server:
+  port: 8080
+  templates_path: "./templates/backgrounds"
+  static_path: "./static"
+  font_path: "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
