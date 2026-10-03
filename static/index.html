@@ -1,145 +1,430 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<title>Генератор дипломов</title>
-<style>
-  * { box-sizing: border-box; }
-  body {
-    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
-    margin: 0; padding: 24px;
-    background: #f4f6fa; color: #222;
-  }
-  .wrap { max-width: 900px; margin: 0 auto; }
-  h1 { margin-top: 0; }
-  .card {
-    background: #fff; border-radius: 12px; padding: 20px;
-    box-shadow: 0 2px 8px rgba(0,0,0,.06); margin-bottom: 20px;
-  }
-  label { display:block; margin: 10px 0 4px; font-weight: 500; }
-  input, select {
-    width: 100%; padding: 10px; border: 1px solid #ccd;
-    border-radius: 8px; font-size: 14px;
-  }
-  .row { display: flex; gap: 12px; }
-  .row > div { flex: 1; }
-  button {
-    margin-top: 16px; padding: 12px 20px;
-    background: #2d6cdf; color: #fff; border: 0;
-    border-radius: 8px; font-size: 15px; cursor: pointer;
-  }
-  button:hover { background: #2458b8; }
-  button:disabled { background: #999; cursor: not-allowed; }
-  #preview {
-    margin-top: 16px; text-align: center;
-    min-height: 100px;
-  }
-  #preview img { max-width: 100%; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.1); }
-  .error { color: #c0392b; margin-top: 8px; }
-  .hint { color: #777; font-size: 12px; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Генератор дипломов</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 30px; color: #333; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tab { padding: 10px 20px; background: #ddd; border: none; cursor: pointer; border-radius: 5px; }
+        .tab.active { background: #007bff; color: white; }
+        .tab-content { display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .tab-content.active { display: block; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .editor-container { display: flex; gap: 20px; }
+        .editor-left { flex: 1; }
+        .editor-right { width: 300px; }
+        #canvasWrapper {
+            position: relative;
+            display: inline-block;
+            border: 1px solid #ddd;
+            overflow: hidden;
+            background: #f9f9f9;
+        }
+        #editorCanvas { display: block; width: 100%; height: auto; }
+        .field-marker {
+            position: absolute;
+            background: rgba(0, 123, 255, 0.7);
+            color: white;
+            border-radius: 4px;
+            cursor: move;
+            user-select: none;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            white-space: nowrap;
+            transition: all 0.15s ease;
+            min-width: 40px;
+            min-height: 20px;
+        }
+
+        .field-marker:hover {
+            background: rgba(0, 123, 255, 0.9);
+            border-color: white;
+        }
+
+        .field-marker .preview-text {
+            pointer-events: none;
+            font-weight: bold;
+        }
+        .field-config { background: #f9f9f9; padding: 10px; margin-bottom: 10px; border-radius: 4px; }
+        .field-config input { margin-bottom: 5px; }
+        #resultImage { max-width: 100%; border: 1px solid #ddd; margin-top: 20px; }
+        .required { color: red; }
+    </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Генератор дипломов</h1>
-
-  <div class="card">
-    <label>Шаблон</label>
-    <select id="template"></select>
-
-    <label>ФИО участника *</label>
-    <input id="name" placeholder="Иванов Иван Иванович">
-
-    <div class="row">
-      <div>
-        <label>Соревнование *</label>
-        <input id="comp" placeholder="Кубок города по плаванию">
-      </div>
-      <div>
-        <label>Группа</label>
-        <input id="group" placeholder="Юниоры 14-16 лет">
-      </div>
-      <div>
-        <label>Место</label>
-        <input id="place" placeholder="1">
-      </div>
+    <div class="container">
+        <h1>Генератор дипломов</h1>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('generate')">Генерация</button>
+            <button class="tab" onclick="switchTab('editor')">Редактор шаблонов</button>
+        </div>
+        
+        <div id="generateTab" class="tab-content active">
+            <div class="form-group">
+                <label>Шаблон <span class="required">*</span></label>
+                <select id="templateSelect" required></select>
+            </div>
+            <div class="form-group">
+                <label>ФИО участника <span class="required">*</span></label>
+                <input type="text" id="nameInput" required>
+            </div>
+            <div class="form-group">
+                <label>Соревнование <span class="required">*</span></label>
+                <input type="text" id="competitionInput" required>
+            </div>
+            <div class="form-group">
+                <label>Группа</label>
+                <input type="text" id="groupInput">
+            </div>
+            <div class="form-group">
+                <label>Место</label>
+                <input type="text" id="placeInput">
+            </div>
+            <button onclick="generateDiploma()">Сгенерировать диплом</button>
+            <div id="resultContainer"></div>
+        </div>
+        
+        <div id="editorTab" class="tab-content">
+            <div class="form-group">
+                <label>Загрузить новый фон (PNG)</label>
+                <input type="file" id="uploadFile" accept=".png">
+                <button onclick="uploadTemplate()" style="margin-top: 10px;">Загрузить</button>
+            </div>
+            
+            <div class="form-group">
+                <label>Выбрать шаблон для редактирования</label>
+                <select id="editorTemplateSelect" onchange="loadTemplateConfig()"></select>
+            </div>
+            
+            <div class="editor-container">
+                <div class="editor-left">
+                    <div id="canvasWrapper">
+                        <canvas id="editorCanvas"></canvas>
+                    </div>
+                </div>
+                <div class="editor-right">
+                    <h3>Поля шаблона</h3>
+                    <div id="fieldsConfig"></div>
+                    <button onclick="addNewField()">+ Добавить поле</button>
+                    <button onclick="saveTemplateConfig()" style="margin-top: 10px; background: #28a745;">Сохранить конфигурацию</button>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <button id="go">Сгенерировать диплом</button>
-    <div id="status" class="error"></div>
-    <p class="hint">* — обязательные поля</p>
-  </div>
+    <script>
+        let currentTemplate = null;
+        let templateConfig = null;
+        let canvas, ctx;
+        let draggedField = null;
+        let offsetX, offsetY;
 
-  <div class="card">
-    <div id="preview">Здесь появится готовый диплом</div>
-  </div>
-</div>
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            
+            if (tabName === 'generate') {
+                document.querySelector('.tab:nth-child(1)').classList.add('active');
+                document.getElementById('generateTab').classList.add('active');
+            } else {
+                document.querySelector('.tab:nth-child(2)').classList.add('active');
+                document.getElementById('editorTab').classList.add('active');
+            }
+        }
 
-<script>
-const API = ''; // тот же хост, что и UI
+        async function loadTemplates() {
+            const response = await fetch('/api/templates');
+            const templates = await response.json();
+            
+            const select = document.getElementById('templateSelect');
+            const editorSelect = document.getElementById('editorTemplateSelect');
+            
+            select.innerHTML = '<option value="">Выберите шаблон</option>';
+            editorSelect.innerHTML = '<option value="">Выберите шаблон</option>';
+            
+            templates.forEach(tmpl => {
+                select.innerHTML += `<option value="${tmpl}">${tmpl}</option>`;
+                editorSelect.innerHTML += `<option value="${tmpl}">${tmpl}</option>`;
+            });
+        }
 
-async function loadTemplates() {
-  const sel = document.getElementById('template');
-  try {
-    const r = await fetch(API + '/api/templates');
-    const list = await r.json();
-    sel.innerHTML = '';
-    if (!list.length) {
-      sel.innerHTML = '<option value="">— шаблонов нет —</option>';
-      return;
-    }
-    list.forEach(t => {
-      const o = document.createElement('option');
-      o.value = t; o.textContent = t;
-      sel.appendChild(o);
-    });
-  } catch (e) {
-    sel.innerHTML = '<option value="">ошибка загрузки</option>';
-  }
-}
+        async function generateDiploma() {
+            const template = document.getElementById('templateSelect').value;
+            const name = document.getElementById('nameInput').value;
+            const competition = document.getElementById('competitionInput').value;
+            const group = document.getElementById('groupInput').value;
+            const place = document.getElementById('placeInput').value;
+            
+            if (!template || !name || !competition) {
+                alert('Заполните обязательные поля');
+                return;
+            }
+            
+            const params = new URLSearchParams({
+                template, name, competition, group, place
+            });
+            
+            const response = await fetch(`/generate?${params}`);
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            
+            document.getElementById('resultContainer').innerHTML = 
+                `<img id="resultImage" src="${url}" alt="Диплом">`;
+        }
 
-document.getElementById('go').addEventListener('click', async () => {
-  const name  = document.getElementById('name').value.trim();
-  const comp  = document.getElementById('comp').value.trim();
-  const group = document.getElementById('group').value.trim();
-  const place = document.getElementById('place').value.trim();
-  const tmpl  = document.getElementById('template').value;
-  const status = document.getElementById('status');
-  const preview = document.getElementById('preview');
-  status.textContent = '';
+        async function uploadTemplate() {
+            const fileInput = document.getElementById('uploadFile');
+            if (!fileInput.files[0]) {
+                alert('Выберите файл');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            
+            const response = await fetch('/api/template/upload', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (response.ok) {
+                alert('Шаблон загружен');
+                loadTemplates();
+            } else {
+                alert('Ошибка загрузки');
+            }
+        }
 
-  if (!name || !comp || !tmpl) {
-    status.textContent = 'Заполните ФИО, соревнование и выберите шаблон';
-    return;
-  }
+        async function loadTemplateConfig() {
+            const templateName = document.getElementById('editorTemplateSelect').value;
+            if (!templateName) return;
+            
+            currentTemplate = templateName;
+            
+            const response = await fetch(`/api/template/config?name=${encodeURIComponent(templateName)}`);
+            const yamlText = await response.text();
+            
+            templateConfig = parseYAML(yamlText);
+            
+            const img = new Image();
+            img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                
+                setTimeout(() => {
+                    renderFieldMarkers();
+                }, 100);
+            };
+            img.onerror = (e) => {
+                console.error('Failed to load image:', e);
+                alert('Не удалось загрузить изображение шаблона');
+            };
+            img.src = `/templates/${encodeURIComponent(templateName)}.png`;
+            
+            renderFieldsConfig();
+        }
 
-  // Собираем единый текст для бэкенда
-  let text = comp;
-  if (group) text += ' • ' + group;
-  if (place) text += ' • ' + place + ' место';
+        function parseYAML(yaml) {
+            const lines = yaml.split('\n');
+            const config = { fields: [] };
+            let currentField = null;
+            
+            lines.forEach(line => {
+                line = line.trim();
+                if (line.startsWith('name:')) {
+                    config.name = line.split(':')[1].trim();
+                } else if (line.startsWith('- name:')) {
+                    if (currentField) config.fields.push(currentField);
+                    currentField = { name: line.split(':')[1].trim() };
+                } else if (currentField && line.startsWith('x_percent:')) {
+                    currentField.x_percent = parseFloat(line.split(':')[1]);
+                } else if (currentField && line.startsWith('y_percent:')) {
+                    currentField.y_percent = parseFloat(line.split(':')[1]);
+                } else if (currentField && line.startsWith('font_size_percent:')) {
+                    currentField.font_size_percent = parseFloat(line.split(':')[1]);
+                } else if (currentField && line.startsWith('color:')) {
+                    currentField.color = line.split(':')[1].trim();
+                }
+            });
+            if (currentField) config.fields.push(currentField);
+            
+            return config;
+        }
 
-  const url = API + '/generate?' + new URLSearchParams({
-    name, text, template: tmpl
-  });
+        function renderFieldsConfig() {
+            const container = document.getElementById('fieldsConfig');
+            container.innerHTML = '';
+            
+            templateConfig.fields.forEach((field, index) => {
+                const div = document.createElement('div');
+                div.className = 'field-config';
+                div.innerHTML = `
+                    <strong>${field.name}</strong>
+                    <input type="text" value="${field.name}" onchange="updateField(${index}, 'name', this.value)" placeholder="Имя поля">
+                    <input type="number" value="${field.font_size_percent}" onchange="updateField(${index}, 'font_size_percent', this.value)" placeholder="Размер шрифта (%)" step="0.1">
+                    <input type="color" value="${field.color}" onchange="updateField(${index}, 'color', this.value)">
+                    <button onclick="deleteField(${index})" style="background: #dc3545; margin-top: 5px;">Удалить</button>
+                `;
+                container.appendChild(div);
+            });
+        }
 
-  preview.innerHTML = 'Генерируем...';
-  try {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(await r.text());
-    const blob = await r.blob();
-    const objUrl = URL.createObjectURL(blob);
-    preview.innerHTML =
-      `<img src="${objUrl}"><br>
-       <a href="${objUrl}" download="diploma_${name}.png">
-         <button type="button">Скачать PNG</button>
-       </a>`;
-  } catch (e) {
-    preview.innerHTML = '';
-    status.textContent = 'Ошибка: ' + e.message;
-  }
-});
+        function updateField(index, property, value) {
+            if (property === 'font_size_percent') {
+                templateConfig.fields[index][property] = parseFloat(value);
+            } else {
+                templateConfig.fields[index][property] = value;
+            }
+            // Перерисовываем маркеры с новым размером
+            renderFieldMarkers();
+        }
 
-loadTemplates();
-</script>
+        function deleteField(index) {
+            templateConfig.fields.splice(index, 1);
+            renderFieldsConfig();
+            renderFieldMarkers();
+        }
+
+        function addNewField() {
+            templateConfig.fields.push({
+                name: 'new_field',
+                x_percent: 50,
+                y_percent: 50,
+                font_size_percent: 4,
+                color: '#000000'
+            });
+            renderFieldsConfig();
+            renderFieldMarkers();
+        }
+
+        function renderFieldMarkers() {
+            document.querySelectorAll('.field-marker').forEach(m => m.remove());
+            
+            const wrapper = document.getElementById('canvasWrapper');
+            const canvas = document.getElementById('editorCanvas');
+            
+            if (canvas.width === 0) return;
+            
+            // Коэффициент масштабирования: canvas на экране vs реальный размер
+            const displayScale = canvas.clientWidth / canvas.width;
+            
+            templateConfig.fields.forEach((field, index) => {
+                const marker = document.createElement('div');
+                marker.className = 'field-marker';
+                
+                // Вычисляем реальный размер шрифта в пикселях на изображении
+                const realFontSizePx = (canvas.height * field.font_size_percent / 100.0);
+                
+                // Масштабируем для отображения на экране
+                const displayFontSize = Math.max(8, realFontSizePx * displayScale);
+                
+                // Создаём текст-превью
+                const preview = document.createElement('span');
+                preview.className = 'preview-text';
+                preview.textContent = field.name;
+                preview.style.fontSize = displayFontSize + 'px';
+                preview.style.lineHeight = '1.2';
+                marker.appendChild(preview);
+                
+                // Позиционируем в процентах
+                marker.style.left = field.x_percent + '%';
+                marker.style.top = field.y_percent + '%';
+                marker.dataset.index = index;
+                
+                // Добавляем padding пропорционально размеру шрифта
+                const padding = displayFontSize * 0.3;
+                marker.style.padding = padding + 'px ' + (padding * 1.5) + 'px';
+                
+                marker.addEventListener('mousedown', startDrag);
+                wrapper.appendChild(marker);
+            });
+        }
+
+        function startDrag(e) {
+            draggedField = e.target;
+            const rect = draggedField.getBoundingClientRect();
+            offsetX = e.clientX - rect.left;
+            offsetY = e.clientY - rect.top;
+            
+            document.addEventListener('mousemove', drag);
+            document.addEventListener('mouseup', stopDrag);
+        }
+
+        function drag(e) {
+            if (!draggedField) return;
+            
+            const wrapper = document.getElementById('canvasWrapper');
+            const wrapperRect = wrapper.getBoundingClientRect();
+            
+            // Вычисляем позицию в процентах от wrapper
+            let x = ((e.clientX - wrapperRect.left) / wrapperRect.width) * 100;
+            let y = ((e.clientY - wrapperRect.top) / wrapperRect.height) * 100;
+            
+            // Ограничиваем в пределах 0-100%
+            x = Math.max(0, Math.min(100, x));
+            y = Math.max(0, Math.min(100, y));
+            
+            // Обновляем позицию маркера
+            draggedField.style.left = x + '%';
+            draggedField.style.top = y + '%';
+            
+            // Сохраняем в конфигурацию
+            const index = parseInt(draggedField.dataset.index);
+            templateConfig.fields[index].x_percent = x;
+            templateConfig.fields[index].y_percent = y;
+        }
+
+        function stopDrag() {
+            document.removeEventListener('mousemove', drag);
+            document.removeEventListener('mouseup', stopDrag);
+            draggedField = null;
+        }
+
+        async function saveTemplateConfig() {
+            if (!currentTemplate) return;
+            
+            let yaml = `name: ${currentTemplate}\nfields:\n`;
+            templateConfig.fields.forEach(field => {
+                yaml += `  - name: ${field.name}\n`;
+                yaml += `    x_percent: ${field.x_percent}\n`;
+                yaml += `    y_percent: ${field.y_percent}\n`;
+                yaml += `    font_size_percent: ${field.font_size_percent}\n`;
+                yaml += `    color: ${field.color}\n`;
+            });
+            
+            const response = await fetch('/api/template/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/yaml' },
+                body: yaml
+            });
+            
+            if (response.ok) {
+                alert('Конфигурация сохранена');
+            } else {
+                alert('Ошибка сохранения');
+            }
+        }
+
+        window.onload = () => {
+            canvas = document.getElementById('editorCanvas');
+            ctx = canvas.getContext('2d');
+            loadTemplates();
+        };
+    </script>
 </body>
 </html>

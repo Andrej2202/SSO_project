@@ -2,6 +2,10 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <map>
+#include <fstream>
+#include <cstdlib>
+#include <ctime>
 #include <yaml-cpp/yaml.h>
 #include <opencv2/opencv.hpp>
 #include <ft2build.h>
@@ -17,33 +21,96 @@ struct Config {
     std::string font_path;
 };
 
+struct FieldConfig {
+    std::string name;
+    double x_percent;
+    double y_percent;
+    double font_size_percent;
+    std::string color;
+};
+
+struct TemplateConfig {
+    std::string name;
+    std::string image_path;
+    std::vector<FieldConfig> fields;
+};
+
 Config load_config(const std::string& path) {
     Config cfg;
     YAML::Node config = YAML::LoadFile(path);
     YAML::Node server = config["server"];
-    
     cfg.port = server["port"].as<int>();
     cfg.templates_path = server["templates_path"].as<std::string>();
     
-    // Безопасное чтение с дефолтными значениями для старых версий yaml-cpp
     if (server["static_path"] && server["static_path"].IsScalar()) {
         cfg.static_path = server["static_path"].as<std::string>();
     } else {
         cfg.static_path = "./static";
-        std::cerr << "Warning: static_path not found in config, using default './static'\n";
     }
     
     if (server["font_path"] && server["font_path"].IsScalar()) {
         cfg.font_path = server["font_path"].as<std::string>();
     } else {
         cfg.font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-        std::cerr << "Warning: font_path not found in config, using default DejaVuSans\n";
     }
     
     return cfg;
 }
 
-// Декодирование UTF-8 в code points
+TemplateConfig load_template_config(const std::string& template_name, const std::string& templates_path) {
+    TemplateConfig tmpl;
+    tmpl.name = template_name;
+    tmpl.image_path = templates_path + "/" + template_name + ".png";
+    
+    std::string config_path = templates_path + "/" + template_name + ".yaml";
+    if (fs::exists(config_path)) {
+        YAML::Node config = YAML::LoadFile(config_path);
+        if (config["fields"]) {
+            for (const auto& field : config["fields"]) {
+                FieldConfig fc;
+                fc.name = field["name"].as<std::string>();
+                fc.x_percent = field["x_percent"].as<double>();
+                fc.y_percent = field["y_percent"].as<double>();
+                fc.font_size_percent = field["font_size_percent"].as<double>();
+                fc.color = field["color"] ? field["color"].as<std::string>() : "#000000";
+                tmpl.fields.push_back(fc);
+            }
+        }
+    } else {
+        tmpl.fields = {
+            {"name", 50.0, 42.0, 6.67, "#000000"},
+            {"competition", 50.0, 52.0, 4.0, "#000000"},
+            {"group", 50.0, 58.0, 4.0, "#000000"},
+            {"place", 50.0, 64.0, 4.0, "#000000"}
+        };
+    }
+    
+    return tmpl;
+}
+
+void save_template_config(const TemplateConfig& tmpl, const std::string& templates_path) {
+    std::string config_path = templates_path + "/" + tmpl.name + ".yaml";
+    YAML::Emitter out;
+    out << YAML::BeginMap;
+    out << YAML::Key << "name" << YAML::Value << tmpl.name;
+    out << YAML::Key << "fields" << YAML::Value;
+    out << YAML::BeginSeq;
+    for (const auto& field : tmpl.fields) {
+        out << YAML::BeginMap;
+        out << YAML::Key << "name" << YAML::Value << field.name;
+        out << YAML::Key << "x_percent" << YAML::Value << field.x_percent;
+        out << YAML::Key << "y_percent" << YAML::Value << field.y_percent;
+        out << YAML::Key << "font_size_percent" << YAML::Value << field.font_size_percent;
+        out << YAML::Key << "color" << YAML::Value << field.color;
+        out << YAML::EndMap;
+    }
+    out << YAML::EndSeq;
+    out << YAML::EndMap;
+    
+    std::ofstream fout(config_path);
+    fout << out.c_str();
+}
+
 std::vector<unsigned int> utf8_to_unicode(const std::string& utf8) {
     std::vector<unsigned int> result;
     size_t i = 0;
@@ -57,7 +124,7 @@ std::vector<unsigned int> utf8_to_unicode(const std::string& utf8) {
         } else if ((c & 0xF0) == 0xE0) {
             cp = ((c & 0x0F) << 12) | ((utf8[i+1] & 0x3F) << 6) | (utf8[i+2] & 0x3F); i += 3;
         } else {
-            cp = ((c & 0x07) << 18) | ((utf8[i+1] & 0x3F) << 12) | 
+            cp = ((c & 0x07) << 18) | ((utf8[i+1] & 0x3F) << 12) |
                  ((utf8[i+2] & 0x3F) << 6) | (utf8[i+3] & 0x3F); i += 4;
         }
         result.push_back(cp);
@@ -65,24 +132,27 @@ std::vector<unsigned int> utf8_to_unicode(const std::string& utf8) {
     return result;
 }
 
-// Рендеринг текста через FreeType (поддерживает кириллицу)
-void render_text(cv::Mat& img, const std::string& text, int x, int y, 
+cv::Scalar hex_to_color(const std::string& hex) {
+    if (hex.length() != 7 || hex[0] != '#') return cv::Scalar(0, 0, 0);
+    int r = std::stoi(hex.substr(1, 2), nullptr, 16);
+    int g = std::stoi(hex.substr(3, 2), nullptr, 16);
+    int b = std::stoi(hex.substr(5, 2), nullptr, 16);
+    return cv::Scalar(b, g, r);
+}
+
+void render_text(cv::Mat& img, const std::string& text, int x, int y,
                  FT_Face face, double font_size, cv::Scalar color) {
     FT_Set_Pixel_Sizes(face, 0, (FT_UInt)font_size);
     auto glyphs = utf8_to_unicode(text);
     int pen_x = x;
-    
     for (unsigned int cp : glyphs) {
         if (FT_Load_Char(face, cp, FT_LOAD_RENDER)) continue;
         FT_GlyphSlot glyph = face->glyph;
         
-        // ИСПРАВЛЕНО: bitmap_top - это расстояние ОТ базовой линии ВВЕРХ
-        // Поэтому нужно вычитать, а не прибавлять
         for (int row = 0; row < glyph->bitmap.rows; ++row) {
             for (int col = 0; col < glyph->bitmap.width; ++col) {
                 int px = pen_x + glyph->bitmap_left + col;
-                int py = y - glyph->bitmap_top + row;  // <-- ИСПРАВЛЕНО: минус вместо плюса
-                
+                int py = y - glyph->bitmap_top + row;
                 if (px >= 0 && px < img.cols && py >= 0 && py < img.rows) {
                     unsigned char alpha = glyph->bitmap.buffer[row * glyph->bitmap.width + col];
                     if (alpha > 0) {
@@ -98,52 +168,43 @@ void render_text(cv::Mat& img, const std::string& text, int x, int y,
     }
 }
 
-void generate_diploma(const std::string& template_path,
-                      const std::string& name,
-                      const std::string& text,
-                      const std::string& output_path,
-                      const std::string& font_path) {
-    cv::Mat img = cv::imread(template_path);
-    if (img.empty()) throw std::runtime_error("Failed to load template: " + template_path);
-
+void generate_diploma(const TemplateConfig& tmpl,
+                     const std::map<std::string, std::string>& data,
+                     const std::string& output_path,
+                     const std::string& font_path) {
+    cv::Mat img = cv::imread(tmpl.image_path);
+    if (img.empty()) throw std::runtime_error("Failed to load template: " + tmpl.image_path);
+    
     FT_Library ft;
     if (FT_Init_FreeType(&ft)) throw std::runtime_error("Could not init FreeType");
-    
     FT_Face face;
     if (FT_New_Face(ft, font_path.c_str(), 0, &face)) {
         FT_Done_FreeType(ft);
         throw std::runtime_error("Could not load font: " + font_path);
     }
-
+    
     int width = img.cols;
     int height = img.rows;
     
-    double name_font_size = std::min(width, height) / 15.0;
-    double text_font_size = name_font_size * 0.6;
-    
-    int name_y = height * 0.42;
-    int text_y = height * 0.58;
-    
-    // Вычисляем ширину для центрирования
-    FT_Set_Pixel_Sizes(face, 0, (FT_UInt)name_font_size);
-    int name_width = 0;
-    for (unsigned int cp : utf8_to_unicode(name)) {
-        if (FT_Load_Char(face, cp, FT_LOAD_DEFAULT)) continue;
-        name_width += face->glyph->advance.x >> 6;
+    for (const auto& field : tmpl.fields) {
+        auto it = data.find(field.name);
+        if (it == data.end() || it->second.empty()) continue;
+        
+        double font_size = height * field.font_size_percent / 100.0;
+        int x = width * field.x_percent / 100.0;
+        int y = height * field.y_percent / 100.0;
+        
+        FT_Set_Pixel_Sizes(face, 0, (FT_UInt)font_size);
+        int text_width = 0;
+        for (unsigned int cp : utf8_to_unicode(it->second)) {
+            if (FT_Load_Char(face, cp, FT_LOAD_DEFAULT)) continue;
+            text_width += face->glyph->advance.x >> 6;
+        }
+        
+        int centered_x = x - text_width / 2;
+        cv::Scalar color = hex_to_color(field.color);
+        render_text(img, it->second, centered_x, y, face, font_size, color);
     }
-    
-    FT_Set_Pixel_Sizes(face, 0, (FT_UInt)text_font_size);
-    int text_width = 0;
-    for (unsigned int cp : utf8_to_unicode(text)) {
-        if (FT_Load_Char(face, cp, FT_LOAD_DEFAULT)) continue;
-        text_width += face->glyph->advance.x >> 6;
-    }
-    
-    int name_x = (width - name_width) / 2;
-    int text_x = (width - text_width) / 2;
-    
-    render_text(img, name, name_x, name_y, face, name_font_size, cv::Scalar(0, 0, 0));
-    render_text(img, text, text_x, text_y, face, text_font_size, cv::Scalar(0, 0, 0));
     
     FT_Done_Face(face);
     FT_Done_FreeType(ft);
@@ -154,10 +215,9 @@ int main() {
     try {
         Config cfg = load_config("config/static_config.yaml");
         httplib::Server svr;
-
-        // Раздача статики (UI)
+        
         svr.set_mount_point("/", cfg.static_path);
-
+        
         // API: список шаблонов
         svr.Get("/api/templates", [&](const httplib::Request&, httplib::Response& res) {
             std::string json = "[";
@@ -174,35 +234,179 @@ int main() {
             json += "]";
             res.set_content(json, "application/json");
         });
-
-        // API: генерация
-        svr.Get("/generate", [&](const httplib::Request& req, httplib::Response& res) {
+        
+        // API: получить конфигурацию шаблона
+        svr.Get("/api/template/config", [&](const httplib::Request& req, httplib::Response& res) {
             std::string name = req.get_param_value("name");
-            std::string text = req.get_param_value("text");
-            std::string tmpl = req.get_param_value("template");
-
-            if (name.empty() || text.empty() || tmpl.empty()) {
+            if (name.empty()) {
                 res.status = 400;
-                res.set_content("Missing parameters: name, text, template", "text/plain");
+                res.set_content("Missing template name", "text/plain");
                 return;
             }
-
-            std::string template_path = cfg.templates_path + "/" + tmpl + ".png";
-            std::string output_path = "/tmp/diploma_" + std::to_string(rand()) + ".png";
-
+            
             try {
-                generate_diploma(template_path, name, text, output_path, cfg.font_path);
-                res.set_file_content(output_path, "image/png");
+                TemplateConfig tmpl = load_template_config(name, cfg.templates_path);
+                YAML::Emitter out;
+                out << YAML::BeginMap;
+                out << YAML::Key << "name" << YAML::Value << tmpl.name;
+                out << YAML::Key << "fields" << YAML::Value;
+                out << YAML::BeginSeq;
+                for (const auto& field : tmpl.fields) {
+                    out << YAML::BeginMap;
+                    out << YAML::Key << "name" << YAML::Value << field.name;
+                    out << YAML::Key << "x_percent" << YAML::Value << field.x_percent;
+                    out << YAML::Key << "y_percent" << YAML::Value << field.y_percent;
+                    out << YAML::Key << "font_size_percent" << YAML::Value << field.font_size_percent;
+                    out << YAML::Key << "color" << YAML::Value << field.color;
+                    out << YAML::EndMap;
+                }
+                out << YAML::EndSeq;
+                out << YAML::EndMap;
+                res.set_content(out.c_str(), "application/yaml");
             } catch (const std::exception& e) {
                 res.status = 500;
                 res.set_content(std::string("Error: ") + e.what(), "text/plain");
             }
         });
-
+        
+        // API: загрузить новый шаблон
+        svr.Post("/api/template/upload", [&](const httplib::Request& req, httplib::Response& res) {
+            auto it = req.files.find("file");
+            if (it == req.files.end()) {
+                res.status = 400;
+                res.set_content("No file uploaded", "text/plain");
+                return;
+            }
+            const auto& file = it->second;
+            
+            std::string filename = file.filename;
+            if (filename.empty() || filename.find(".png") == std::string::npos) {
+                res.status = 400;
+                res.set_content("Invalid file format. Only PNG allowed", "text/plain");
+                return;
+            }
+            
+            std::string template_name = filename.substr(0, filename.length() - 4);
+            std::string dest_path = cfg.templates_path + "/" + filename;
+            
+            std::ofstream fout(dest_path, std::ios::binary);
+            fout.write(file.content.data(), file.content.size());
+            fout.close();
+            
+            TemplateConfig tmpl;
+            tmpl.name = template_name;
+            tmpl.image_path = dest_path;
+            tmpl.fields = {
+                {"name", 50.0, 42.0, 6.67, "#000000"},
+                {"competition", 50.0, 52.0, 4.0, "#000000"},
+                {"group", 50.0, 58.0, 4.0, "#000000"},
+                {"place", 50.0, 64.0, 4.0, "#000000"}
+            };
+            save_template_config(tmpl, cfg.templates_path);
+            
+            res.set_content("{\"success\": true, \"name\": \"" + template_name + "\"}", "application/json");
+        });
+        
+        // API: сохранить конфигурацию шаблона
+        svr.Post("/api/template/save", [&](const httplib::Request& req, httplib::Response& res) {
+            try {
+                YAML::Node config = YAML::Load(req.body);
+                TemplateConfig tmpl;
+                tmpl.name = config["name"].as<std::string>();
+                tmpl.image_path = cfg.templates_path + "/" + tmpl.name + ".png";
+                
+                for (const auto& field : config["fields"]) {
+                    FieldConfig fc;
+                    fc.name = field["name"].as<std::string>();
+                    fc.x_percent = field["x_percent"].as<double>();
+                    fc.y_percent = field["y_percent"].as<double>();
+                    fc.font_size_percent = field["font_size_percent"].as<double>();
+                    fc.color = field["color"].as<std::string>();
+                    tmpl.fields.push_back(fc);
+                }
+                
+                save_template_config(tmpl, cfg.templates_path);
+                res.set_content("{\"success\": true}", "application/json");
+            } catch (const std::exception& e) {
+                res.status = 500;
+                res.set_content(std::string("Error: ") + e.what(), "text/plain");
+            }
+        });
+        
+        // API: генерация
+        svr.Get("/generate", [&](const httplib::Request& req, httplib::Response& res) {
+            std::string name = req.get_param_value("name");
+            std::string competition = req.get_param_value("competition");
+            std::string group = req.get_param_value("group");
+            std::string place = req.get_param_value("place");
+            std::string tmpl_name = req.get_param_value("template");
+            
+            if (name.empty() || competition.empty() || tmpl_name.empty()) {
+                res.status = 400;
+                res.set_content("Missing required parameters", "text/plain");
+                return;
+            }
+            
+            try {
+                TemplateConfig tmpl = load_template_config(tmpl_name, cfg.templates_path);
+                std::map<std::string, std::string> data = {
+                    {"name", name},
+                    {"competition", competition},
+                    {"group", group},
+                    {"place", place}
+                };
+                
+                std::string output_path = "/tmp/diploma_" + std::to_string(rand()) + "_" + 
+                                          std::to_string(std::time(nullptr)) + ".png";
+                generate_diploma(tmpl, data, output_path, cfg.font_path);
+                
+                std::ifstream ifs(output_path, std::ios::binary);
+                if (!ifs) {
+                    res.status = 500;
+                    res.set_content("Failed to read generated file", "text/plain");
+                    return;
+                }
+                std::string body((std::istreambuf_iterator<char>(ifs)), 
+                                  std::istreambuf_iterator<char>());
+                ifs.close();
+                
+                std::remove(output_path.c_str());
+                
+                res.set_content(body, "image/png");
+            } catch (const std::exception& e) {
+                res.status = 500;
+                res.set_content(std::string("Error: ") + e.what(), "text/plain");
+            }
+        });
+        
+        // API: отдача файла шаблона (PNG)
+        svr.Get("/templates/:filename", [&](const httplib::Request& req, httplib::Response& res) {
+            std::string filename = req.path_params.at("filename");
+            std::string filepath = cfg.templates_path + "/" + filename;
+            
+            if (!fs::exists(filepath)) {
+                res.status = 404;
+                res.set_content("Template not found", "text/plain");
+                return;
+            }
+            
+            std::ifstream ifs(filepath, std::ios::binary);
+            if (!ifs) {
+                res.status = 500;
+                res.set_content("Failed to read file", "text/plain");
+                return;
+            }
+            std::string body((std::istreambuf_iterator<char>(ifs)), 
+                              std::istreambuf_iterator<char>());
+            ifs.close();
+            
+            res.set_content(body, "image/png");
+        });
+        
         svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
             res.set_content("OK", "text/plain");
         });
-
+        
         std::cout << "Server starting on port " << cfg.port << "..." << std::endl;
         svr.listen("0.0.0.0", cfg.port);
     } catch (const std::exception& e) {

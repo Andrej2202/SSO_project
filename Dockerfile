@@ -12,7 +12,8 @@ RUN apt-get update && apt-get install -y \
     fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 https://github.com/yhirose/cpp-httplib.git /opt/cpp-httplib
+# ФИКСИРУЕМ версию cpp-httplib для стабильности API
+RUN git clone --branch v0.15.3 --depth 1 https://github.com/yhirose/cpp-httplib.git /opt/cpp-httplib
 
 WORKDIR /app
 
