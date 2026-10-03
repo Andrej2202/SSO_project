@@ -268,6 +268,77 @@ int main() {
                 res.set_content(std::string("Error: ") + e.what(), "text/plain");
             }
         });
+
+
+        // API: переименовать шаблон
+        svr.Post("/api/template/rename", [&](const httplib::Request& req, httplib::Response& res) {
+            try {
+                YAML::Node body = YAML::Load(req.body);
+                std::string old_name = body["old_name"].as<std::string>();
+                std::string new_name = body["new_name"].as<std::string>();
+                
+                if (old_name.empty() || new_name.empty()) {
+                    res.status = 400;
+                    res.set_content("Old name and new name are required", "text/plain");
+                    return;
+                }
+                
+                if (old_name == new_name) {
+                    res.status = 400;
+                    res.set_content("New name is the same as old name", "text/plain");
+                    return;
+                }
+                
+                // Валидация нового имени (только безопасные символы)
+                for (char c : new_name) {
+                    if (!std::isalnum(c) && c != '_' && c != '-' && c != '.') {
+                        res.status = 400;
+                        res.set_content("Invalid characters in new name. Use only letters, digits, _, -, .", "text/plain");
+                        return;
+                    }
+                }
+                
+                std::string old_png = cfg.templates_path + "/" + old_name + ".png";
+                std::string old_yaml = cfg.templates_path + "/" + old_name + ".yaml";
+                std::string new_png = cfg.templates_path + "/" + new_name + ".png";
+                std::string new_yaml = cfg.templates_path + "/" + new_name + ".yaml";
+                
+                // Проверяем что старый файл существует
+                if (!fs::exists(old_png)) {
+                    res.status = 404;
+                    res.set_content("Template not found: " + old_name, "text/plain");
+                    return;
+                }
+                
+                // Проверяем что новое имя свободно
+                if (fs::exists(new_png)) {
+                    res.status = 409;
+                    res.set_content("Template with this name already exists", "text/plain");
+                    return;
+                }
+                
+                // Переименовываем PNG
+                fs::rename(old_png, new_png);
+                
+                // Переименовываем YAML если существует
+                if (fs::exists(old_yaml)) {
+                    fs::rename(old_yaml, new_yaml);
+                    
+                    // Обновляем поле name внутри YAML
+                    YAML::Node config = YAML::LoadFile(new_yaml);
+                    config["name"] = new_name;
+                    std::ofstream fout(new_yaml);
+                    YAML::Emitter out;
+                    out << config;
+                    fout << out.c_str();
+                }
+                
+                res.set_content("{\"success\": true, \"new_name\": \"" + new_name + "\"}", "application/json");
+            } catch (const std::exception& e) {
+                res.status = 500;
+                res.set_content(std::string("Error: ") + e.what(), "text/plain");
+            }
+        });
         
         // API: загрузить новый шаблон
         svr.Post("/api/template/upload", [&](const httplib::Request& req, httplib::Response& res) {
@@ -333,28 +404,25 @@ int main() {
             }
         });
         
-        // API: генерация
+        // API: генерация (динамические поля)
         svr.Get("/generate", [&](const httplib::Request& req, httplib::Response& res) {
-            std::string name = req.get_param_value("name");
-            std::string competition = req.get_param_value("competition");
-            std::string group = req.get_param_value("group");
-            std::string place = req.get_param_value("place");
             std::string tmpl_name = req.get_param_value("template");
-            
-            if (name.empty() || competition.empty() || tmpl_name.empty()) {
+            if (tmpl_name.empty()) {
                 res.status = 400;
-                res.set_content("Missing required parameters", "text/plain");
+                res.set_content("Missing required parameter: template", "text/plain");
                 return;
             }
             
             try {
                 TemplateConfig tmpl = load_template_config(tmpl_name, cfg.templates_path);
-                std::map<std::string, std::string> data = {
-                    {"name", name},
-                    {"competition", competition},
-                    {"group", group},
-                    {"place", place}
-                };
+                
+                // Собираем данные из всех параметров запроса
+                std::map<std::string, std::string> data;
+                for (const auto& param : req.params) {
+                    if (param.first != "template") {
+                        data[param.first] = param.second;
+                    }
+                }
                 
                 std::string output_path = "/tmp/diploma_" + std::to_string(rand()) + "_" + 
                                           std::to_string(std::time(nullptr)) + ".png";
@@ -371,7 +439,6 @@ int main() {
                 ifs.close();
                 
                 std::remove(output_path.c_str());
-                
                 res.set_content(body, "image/png");
             } catch (const std::exception& e) {
                 res.status = 500;

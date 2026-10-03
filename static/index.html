@@ -7,19 +7,19 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
+        .container { max-width: 1400px; margin: 0 auto; }
         h1 { text-align: center; margin-bottom: 30px; color: #333; }
         .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
-        .tab { padding: 10px 20px; background: #ddd; border: none; cursor: pointer; border-radius: 5px; }
+        .tab { padding: 10px 20px; background: #ddd; border: none; cursor: pointer; border-radius: 5px; font-size: 16px; }
         .tab.active { background: #007bff; color: white; }
         .tab-content { display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .tab-content.active { display: block; }
         .form-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input, select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        input, select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
         button:hover { background: #0056b3; }
-        .editor-container { display: flex; gap: 20px; }
+        .editor-container { display: flex; gap: 20px; margin-top: 20px; }
         .editor-left { flex: 1; }
         .editor-right { width: 300px; }
         #canvasWrapper {
@@ -28,8 +28,9 @@
             border: 1px solid #ddd;
             overflow: hidden;
             background: #f9f9f9;
+            max-width: 100%;
         }
-        #editorCanvas { display: block; width: 100%; height: auto; }
+        #editorCanvas { display: block; max-width: 100%; height: auto; }
         .field-marker {
             position: absolute;
             background: rgba(0, 123, 255, 0.7);
@@ -48,20 +49,27 @@
             min-width: 40px;
             min-height: 20px;
         }
-
-        .field-marker:hover {
-            background: rgba(0, 123, 255, 0.9);
-            border-color: white;
-        }
-
-        .field-marker .preview-text {
-            pointer-events: none;
-            font-weight: bold;
-        }
+        .field-marker:hover { background: rgba(0, 123, 255, 0.9); border-color: white; }
+        .field-marker .preview-text { pointer-events: none; font-weight: bold; }
         .field-config { background: #f9f9f9; padding: 10px; margin-bottom: 10px; border-radius: 4px; }
         .field-config input { margin-bottom: 5px; }
         #resultImage { max-width: 100%; border: 1px solid #ddd; margin-top: 20px; }
         .required { color: red; }
+        .rename-row { display: flex; gap: 10px; align-items: flex-end; margin-top: 10px; }
+        .rename-row > div { flex: 1; }
+        .download-btn {
+            display: inline-block;
+            margin-top: 15px;
+            padding: 10px 20px;
+            background: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .download-btn:hover { background: #218838; }
+        #resultContainer { text-align: center; }
     </style>
 </head>
 <body>
@@ -73,31 +81,20 @@
             <button class="tab" onclick="switchTab('editor')">Редактор шаблонов</button>
         </div>
         
+        <!-- Вкладка генерации -->
         <div id="generateTab" class="tab-content active">
             <div class="form-group">
                 <label>Шаблон <span class="required">*</span></label>
-                <select id="templateSelect" required></select>
+                <select id="templateSelect" required onchange="loadFormFields()"></select>
             </div>
-            <div class="form-group">
-                <label>ФИО участника <span class="required">*</span></label>
-                <input type="text" id="nameInput" required>
-            </div>
-            <div class="form-group">
-                <label>Соревнование <span class="required">*</span></label>
-                <input type="text" id="competitionInput" required>
-            </div>
-            <div class="form-group">
-                <label>Группа</label>
-                <input type="text" id="groupInput">
-            </div>
-            <div class="form-group">
-                <label>Место</label>
-                <input type="text" id="placeInput">
-            </div>
+            
+            <div id="formFields"></div>
+            
             <button onclick="generateDiploma()">Сгенерировать диплом</button>
             <div id="resultContainer"></div>
         </div>
         
+        <!-- Вкладка редактора -->
         <div id="editorTab" class="tab-content">
             <div class="form-group">
                 <label>Загрузить новый фон (PNG)</label>
@@ -108,6 +105,14 @@
             <div class="form-group">
                 <label>Выбрать шаблон для редактирования</label>
                 <select id="editorTemplateSelect" onchange="loadTemplateConfig()"></select>
+            </div>
+            
+            <div class="form-group rename-row">
+                <div>
+                    <label>Переименовать шаблон</label>
+                    <input type="text" id="renameInput" placeholder="Новое имя (латиница, цифры, _ -)">
+                </div>
+                <button onclick="renameTemplate()" style="background: #ff9800;">Переименовать</button>
             </div>
             
             <div class="editor-container">
@@ -131,7 +136,6 @@
         let templateConfig = null;
         let canvas, ctx;
         let draggedField = null;
-        let offsetX, offsetY;
 
         function switchTab(tabName) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -153,6 +157,9 @@
             const select = document.getElementById('templateSelect');
             const editorSelect = document.getElementById('editorTemplateSelect');
             
+            const currentGenerate = select.value;
+            const currentEditor = editorSelect.value;
+            
             select.innerHTML = '<option value="">Выберите шаблон</option>';
             editorSelect.innerHTML = '<option value="">Выберите шаблон</option>';
             
@@ -160,30 +167,79 @@
                 select.innerHTML += `<option value="${tmpl}">${tmpl}</option>`;
                 editorSelect.innerHTML += `<option value="${tmpl}">${tmpl}</option>`;
             });
+            
+            if (templates.includes(currentGenerate)) select.value = currentGenerate;
+            if (templates.includes(currentEditor)) editorSelect.value = currentEditor;
+        }
+
+        async function loadFormFields() {
+            const templateName = document.getElementById('templateSelect').value;
+            const fieldsContainer = document.getElementById('formFields');
+            
+            if (!templateName) {
+                fieldsContainer.innerHTML = '';
+                return;
+            }
+            
+            const response = await fetch(`/api/template/config?name=${encodeURIComponent(templateName)}`);
+            const yamlText = await response.text();
+            const config = parseYAML(yamlText);
+            
+            fieldsContainer.innerHTML = '';
+            
+            config.fields.forEach(field => {
+                const label = field.name
+                    .replace(/_/g, ' ')
+                    .replace(/\b\w/g, c => c.toUpperCase());
+                
+                const div = document.createElement('div');
+                div.className = 'form-group';
+                div.innerHTML = `
+                    <label>${label}</label>
+                    <input type="text" data-field="${field.name}">
+                `;
+                fieldsContainer.appendChild(div);
+            });
         }
 
         async function generateDiploma() {
             const template = document.getElementById('templateSelect').value;
-            const name = document.getElementById('nameInput').value;
-            const competition = document.getElementById('competitionInput').value;
-            const group = document.getElementById('groupInput').value;
-            const place = document.getElementById('placeInput').value;
-            
-            if (!template || !name || !competition) {
-                alert('Заполните обязательные поля');
+            if (!template) {
+                alert('Выберите шаблон');
                 return;
             }
             
-            const params = new URLSearchParams({
-                template, name, competition, group, place
-            });
+            const inputs = document.querySelectorAll('#formFields input[data-field]');
+            const params = new URLSearchParams({ template });
+            
+            for (const input of inputs) {
+                const fieldName = input.dataset.field;
+                const value = input.value.trim();
+                if (value) {
+                    params.append(fieldName, value);
+                }
+            }
             
             const response = await fetch(`/generate?${params}`);
+            if (!response.ok) {
+                const errorText = await response.text();
+                alert('Ошибка генерации: ' + errorText);
+                return;
+            }
+            
             const blob = await response.blob();
             const url = URL.createObjectURL(blob);
             
-            document.getElementById('resultContainer').innerHTML = 
-                `<img id="resultImage" src="${url}" alt="Диплом">`;
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const filename = `diploma_${timestamp}.png`;
+            
+            document.getElementById('resultContainer').innerHTML = `
+                <img id="resultImage" src="${url}" alt="Диплом">
+                <br>
+                <a class="download-btn" href="${url}" download="${filename}">
+                    ⬇ Скачать диплом
+                </a>
+            `;
         }
 
         async function uploadTemplate() {
@@ -203,9 +259,10 @@
             
             if (response.ok) {
                 alert('Шаблон загружен');
-                loadTemplates();
+                fileInput.value = '';
+                await loadTemplates();
             } else {
-                alert('Ошибка загрузки');
+                alert('Ошибка загрузки: ' + await response.text());
             }
         }
 
@@ -246,11 +303,11 @@
             
             lines.forEach(line => {
                 line = line.trim();
-                if (line.startsWith('name:')) {
-                    config.name = line.split(':')[1].trim();
+                if (line.startsWith('name:') && !line.startsWith('- name:')) {
+                    config.name = line.split(':').slice(1).join(':').trim();
                 } else if (line.startsWith('- name:')) {
                     if (currentField) config.fields.push(currentField);
-                    currentField = { name: line.split(':')[1].trim() };
+                    currentField = { name: line.split(':').slice(1).join(':').trim() };
                 } else if (currentField && line.startsWith('x_percent:')) {
                     currentField.x_percent = parseFloat(line.split(':')[1]);
                 } else if (currentField && line.startsWith('y_percent:')) {
@@ -258,7 +315,7 @@
                 } else if (currentField && line.startsWith('font_size_percent:')) {
                     currentField.font_size_percent = parseFloat(line.split(':')[1]);
                 } else if (currentField && line.startsWith('color:')) {
-                    currentField.color = line.split(':')[1].trim();
+                    currentField.color = line.split(':').slice(1).join(':').trim();
                 }
             });
             if (currentField) config.fields.push(currentField);
@@ -274,7 +331,6 @@
                 const div = document.createElement('div');
                 div.className = 'field-config';
                 div.innerHTML = `
-                    <strong>${field.name}</strong>
                     <input type="text" value="${field.name}" onchange="updateField(${index}, 'name', this.value)" placeholder="Имя поля">
                     <input type="number" value="${field.font_size_percent}" onchange="updateField(${index}, 'font_size_percent', this.value)" placeholder="Размер шрифта (%)" step="0.1">
                     <input type="color" value="${field.color}" onchange="updateField(${index}, 'color', this.value)">
@@ -290,7 +346,6 @@
             } else {
                 templateConfig.fields[index][property] = value;
             }
-            // Перерисовываем маркеры с новым размером
             renderFieldMarkers();
         }
 
@@ -320,20 +375,15 @@
             
             if (canvas.width === 0) return;
             
-            // Коэффициент масштабирования: canvas на экране vs реальный размер
             const displayScale = canvas.clientWidth / canvas.width;
             
             templateConfig.fields.forEach((field, index) => {
                 const marker = document.createElement('div');
                 marker.className = 'field-marker';
                 
-                // Вычисляем реальный размер шрифта в пикселях на изображении
                 const realFontSizePx = (canvas.height * field.font_size_percent / 100.0);
-                
-                // Масштабируем для отображения на экране
                 const displayFontSize = Math.max(8, realFontSizePx * displayScale);
                 
-                // Создаём текст-превью
                 const preview = document.createElement('span');
                 preview.className = 'preview-text';
                 preview.textContent = field.name;
@@ -341,12 +391,10 @@
                 preview.style.lineHeight = '1.2';
                 marker.appendChild(preview);
                 
-                // Позиционируем в процентах
                 marker.style.left = field.x_percent + '%';
                 marker.style.top = field.y_percent + '%';
                 marker.dataset.index = index;
                 
-                // Добавляем padding пропорционально размеру шрифта
                 const padding = displayFontSize * 0.3;
                 marker.style.padding = padding + 'px ' + (padding * 1.5) + 'px';
                 
@@ -356,13 +404,11 @@
         }
 
         function startDrag(e) {
-            draggedField = e.target;
-            const rect = draggedField.getBoundingClientRect();
-            offsetX = e.clientX - rect.left;
-            offsetY = e.clientY - rect.top;
+            draggedField = e.target.closest('.field-marker');
             
             document.addEventListener('mousemove', drag);
             document.addEventListener('mouseup', stopDrag);
+            e.preventDefault();
         }
 
         function drag(e) {
@@ -371,19 +417,15 @@
             const wrapper = document.getElementById('canvasWrapper');
             const wrapperRect = wrapper.getBoundingClientRect();
             
-            // Вычисляем позицию в процентах от wrapper
             let x = ((e.clientX - wrapperRect.left) / wrapperRect.width) * 100;
             let y = ((e.clientY - wrapperRect.top) / wrapperRect.height) * 100;
             
-            // Ограничиваем в пределах 0-100%
             x = Math.max(0, Math.min(100, x));
             y = Math.max(0, Math.min(100, y));
             
-            // Обновляем позицию маркера
             draggedField.style.left = x + '%';
             draggedField.style.top = y + '%';
             
-            // Сохраняем в конфигурацию
             const index = parseInt(draggedField.dataset.index);
             templateConfig.fields[index].x_percent = x;
             templateConfig.fields[index].y_percent = y;
@@ -416,7 +458,47 @@
             if (response.ok) {
                 alert('Конфигурация сохранена');
             } else {
-                alert('Ошибка сохранения');
+                alert('Ошибка сохранения: ' + await response.text());
+            }
+        }
+
+        async function renameTemplate() {
+            const oldName = document.getElementById('editorTemplateSelect').value;
+            const newName = document.getElementById('renameInput').value.trim();
+            
+            if (!oldName) {
+                alert('Сначала выберите шаблон');
+                return;
+            }
+            
+            if (!newName) {
+                alert('Введите новое имя');
+                return;
+            }
+            
+            if (!/^[a-zA-Z0-9_\-\.]+$/.test(newName)) {
+                alert('Имя может содержать только латинские буквы, цифры, _, - и .');
+                return;
+            }
+            
+            if (!confirm(`Переименовать "${oldName}" в "${newName}"?`)) {
+                return;
+            }
+            
+            const response = await fetch('/api/template/rename', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/yaml' },
+                body: `old_name: ${oldName}\nnew_name: ${newName}`
+            });
+            
+            if (response.ok) {
+                alert('Шаблон переименован');
+                document.getElementById('renameInput').value = '';
+                await loadTemplates();
+                document.getElementById('editorTemplateSelect').value = newName;
+                await loadTemplateConfig();
+            } else {
+                alert('Ошибка: ' + await response.text());
             }
         }
 
